@@ -1,0 +1,67 @@
+---
+title: "Parameter sampling analysis"
+author: "Josephine Hillebrand Hansen"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#read data
+```{r}
+data <- read.csv("parameter sampling.csv")
+
+data <- data[data$top_p <= 1,] #Remove top_p above 1
+```
+
+
+
+
+#publishable plots
+```{r}
+library("ggpubr")
+ggscatter(data, x = "top_k", y = "SD", 
+          add = "reg.line", conf.int = TRUE, 
+          #cor.coef = TRUE, cor.method = "pearson",
+          xlab = "Top-k", ylab = "Standard deviation of sentiments produced",
+          title = "Test of parameters: Top-k")+
+  stat_cor(method = "spearman", label.y = 1)
+
+
+ggscatter(data, x = "top_p", y = "SD", 
+          add = "reg.line", conf.int = TRUE, 
+          #cor.coef = TRUE, cor.method = "pearson",
+          title = "Test of parameters: Top-p",
+          xlab = "Top-p", ylab = "Standard deviation of sentiments produced")+
+  stat_cor(method = "spearman", label.y = 1)
+
+ggscatter(data, x = "temperature", y = "SD",
+          add = "reg.line", conf.int = TRUE, 
+          #cor.coef = TRUE, cor.method = "pearson",
+          title = "Test of parameters: Temperature",
+          xlab = "Temperature", ylab = "Standard deviation of sentiments produced")+
+  stat_cor(method = "spearman", label.y = 1)
+```
+
+
+
+```{r}
+
+
+lm1 <- lm(SD ~ temperature + top_p + top_k, data = data[data$temperature < 1,])
+
+options(scipen=999)
+summary(lm1)
+```
+
+
+
+
+
+
+
+
+
+
