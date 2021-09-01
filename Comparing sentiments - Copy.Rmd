@@ -1,0 +1,1082 @@
+---
+title: "Prefered versus actual sentiment"
+author: "Josephine Hillebrand Hansen"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+#Plot prefered sentiment against actual sentiment for beta 0 and LR 0
+# Plot with and without sampling against each other.
+```{r}
+library(dplyr)
+library(ggpubr)
+data_noSample <- read.csv("experiment0_beta0_LR0_sampleFalse_22-08-2021 01-18-44.csv")
+  
+data_Sample <- read.csv("experiment2_beta0_16-08-2021 04-21-53.csv")
+
+
+
+#split df into two in order to append sentiment2 and preferedsentiment 2 to the dfs.
+data_noSample2 <- data_noSample %>%
+  select(one_of("Sentiment2", "preferedSentiment2", "Agent2"))
+
+
+data_noSample2 <- data_noSample2 %>%
+  dplyr::rename(Sentiment1 = Sentiment2,
+         preferedSentiment1 = preferedSentiment2,
+         Agent1 = Agent2)
+
+data_noSample <- rbind.fill(data_noSample, data_noSample2)
+
+
+#The same for the data frame with sampling
+data_Sample2 <- data_Sample %>%
+  select(one_of("Sentiment2", "preferedSentiment2", "Agent2"))
+
+
+data_Sample2 <- data_Sample2 %>%
+  dplyr::rename(Sentiment1 = Sentiment2,
+         preferedSentiment1 = preferedSentiment2,
+         Agent1 = Agent2)
+
+data_Sample <- rbind.fill(data_Sample, data_Sample2)
+
+
+
+#Now create datatype column and bind the two.
+
+data_noSample$sample = "Generation using beam search"
+data_Sample$sample = "Generation using sampling"
+
+data <- rbind(data_noSample, data_Sample)
+
+data$sample <- factor(data$sample, levels = c("Generation using beam search", "Generation using sampling"))
+
+
+#Create the plot
+ggscatter(data, x = "preferedSentiment1", y = "Sentiment1", size = 0.6,
+          color = "sample", palette = "jco",
+          facet.by = "sample", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE,
+          xlab = "Preferred sentiment",
+          ylab = "Produced sentiment", fullrange = TRUE,
+          title = "Preferred sentiment compared to produceed sentiment\n for chatbots using beam search and sampling") +
+  stat_cor(aes(color = sample), method = "spearman", label.y = 1)
+
+
+
+length(unique(data_noSample$Agent1))
+length(unique(data_Sample$Agent1))
+
+
+
+cor.test(data_Sample$preferedSentiment1, data_Sample$Sentiment1, method = c("spearman"))
+```
+
+
+
+
+#Look at how good the environment/algorithm is at figuring out the opinion of each chatbot
+```{r}
+data <- data_Sample[1:1250,]
+
+
+empty_list <- vector(mode = "list", length = 0)
+
+
+#okay, we have 50 chatbots.
+#okay, we need to calculate the environment knowledge, which is given by:(t1*1+t2*2+...+t10*10)
+
+#Let us loop through all and create an accumulated knowledge for each chatbot at each step?
+data$knowledge1 = NA
+data$knowledge2 = NA
+
+data$interaction1 = NA
+data$interaction2 = NA
+for (i in 1:length(unique(data$Id))){
+  print(i)
+  temp = list(0)
+  interaction = 1
+  for (j in 1:nrow(data)){
+    
+    if (data$Id[j] == i){
+      
+      knowledge = weighted.mean(unlist(temp), 1:length(temp))
+      
+      temp <- append(temp, data$Sentiment1[j])
+      
+      data$knowledge1[j] = knowledge
+      data$interaction1[j] = interaction
+      interaction = interaction + 1
+    }
+    if (data$Partner_ID[j] == i){
+      
+      knowledge = weighted.mean(unlist(temp), 1:length(temp))
+      
+      temp <- append(temp, data$Sentiment2[j])
+      
+      data$knowledge2[j] = knowledge
+      data$interaction2[j] = interaction
+      
+      interaction = interaction + 1
+    }
+    if (length(temp) > 10){
+      temp[1] = NULL
+    }
+}}
+
+
+
+#now bind them below each other.
+data2 <- data %>%
+  dplyr::select(one_of("Sentiment2", "preferedSentiment2", "Agent2", "knowledge2", "Step", "interaction2"))
+
+
+data2 <- data2 %>%
+  dplyr::rename(Sentiment1 = Sentiment2,
+         preferedSentiment1 = preferedSentiment2,
+         Agent1 = Agent2,
+         knowledge1 = knowledge2,
+         interaction1 = interaction2)
+
+data <- rbind.fill(data, data2)
+
+
+
+#Now create a plot
+ggpar(ggscatter(data, x = "preferedSentiment1", y = "knowledge1", size = 0.6,
+          palette = "jco",
+          add = "reg.line", conf.int = TRUE,
+          xlab = "Preferred opinion",
+          ylab = "Inferred opinion",
+          fullrange = TRUE), xlim=c(-1,1), fullrange = TRUE, title ="Correlation between inferred opinion and preferred\nopinion") +
+  stat_cor(method = "spearman", label.y = 1)
+
+
+ggpar(ggscatter(data[data$Step > 5,], x = "preferedSentiment1", y = "knowledge1", size = 0.6,
+          palette = "jco",
+          add = "reg.line", conf.int = TRUE,
+          xlab = "Preferred sentiment",
+          ylab = "Inferred opinion",
+          fullrange = TRUE), xlim=c(-1,1), fullrange = TRUE) +
+  stat_cor(method = "spearman", label.y = 1)
+
+#After each chatbot has had 10 interactions
+ggpar(ggscatter(data[data$interaction1 > 10,], x = "preferedSentiment1", y = "knowledge1", size = 0.6,
+          palette = "jco",
+          add = "reg.line", conf.int = TRUE,
+          xlab = "Preferred opinion",
+          ylab = "Inferred opinion",
+          fullrange = TRUE), xlim=c(-1,1), fullrange = TRUE, title ="Correlation between inferred opinion and preferred\nopinion after 10 steps") +
+  stat_cor(method = "spearman", label.y = 1)
+
+
+
+
+#look at correlation per time step:
+
+correlations = ddply(data, "Step", summarise, corr=cor(preferedSentiment1, knowledge1))
+
+ggpar(ggscatter(correlations, x = "Step", y = "corr", size = 2,
+          palette = "jco",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Step",
+          title = "Correlation between preferred opinion and inferred opinion\nas a function of steps",
+          ylab = "Correlation between preferred opinion and inferrred opinion",
+          fullrange = TRUE), ylim = c(0,1),fullrange = TRUE)
+
+
+#look at correlation per interaction:
+correlations = ddply(data, "interaction1", summarise, corr=cor(preferedSentiment1, knowledge1))
+
+ggpar(ggscatter(correlations[correlations$interaction1 < 56,], x = "interaction1", y = "corr", size = 2,
+          palette = "jco",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Interaction",
+          title = "Correlation between preferred opinion and inferred opinion\nas a function of interactions",
+          ylab = "Correlation between preferred opinion and inferrred opinion",
+          fullrange = TRUE), ylim = c(0,1),fullrange = TRUE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Read in data for all beta experiments (with no learning rate)
+create column for beta.
+rbind the dataframes.
+compare prefered sentiments - that is how similar are the agents who interact with each other.
+```{r}
+databeta1 <- read.csv("experiment2_beta0.5_17-08-2021 10-18-00.csv")
+databeta2 <- read.csv("experiment2_beta0_16-08-2021 04-21-53.csv")
+databeta3 <- read.csv("experiment2_beta1_15-08-2021 14-48-24.csv")
+databeta4 <- read.csv("experiment2_beta2_16-08-2021 19-47-29.csv")
+databeta5 <- read.csv("experiment2_beta3_17-08-2021 23-26-45.csv")
+
+
+databeta1$beta = 0.5
+databeta2$beta = 0
+databeta3$beta = 1
+databeta4$beta = 2
+databeta5$beta = 3
+
+
+data <- rbind(databeta1, databeta2, databeta3, databeta4, databeta5)
+
+data$beta <- as.factor(data$beta)
+
+
+#Create the plot
+ggscatter(data, x = "preferedSentiment1", y = "preferedSentiment2", size = 0.6,
+          color = "beta", palette = "jco",
+          facet.by = "beta", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE,
+          xlab = "Preferred sentiment",
+          ylab = "Preferred sentiment partner", fullrange = TRUE) +
+  stat_cor(aes(color = beta), method = "spearman", label.y = 1.1)
+
+ggscatter(data[data$Step > 3,], x = "preferedSentiment1", y = "preferedSentiment2", size = 0.6,
+          color = "beta", palette = "jco",
+          facet.by = "beta", #scales = "free_x",
+          add = "reg.line", conf.int = TRUE,
+          xlab = "Preferred opinion",
+          ylab = "Preferred opinion partner", fullrange = TRUE,
+          title = "Correlation between preferred opinion and preferred opinion\nof the partner divided by beta") +
+  stat_cor(aes(color = beta), method = "spearman", label.y = 1)
+
+```
+
+
+
+
+
+
+
+#learning rate experiments - read in learning data and compare the developments of the system
+```{r}
+dataLR1 <- read.csv("experiment2_beta0_16-08-2021 04-21-53.csv")
+dataLR2 <- read.csv("experiment3_beta0_LR0.1_18-08-2021 12-39-25.csv")
+dataLR3 <- read.csv("experiment3_beta0_LR0.5_19-08-2021 00-56-25.csv")
+dataLR4 <- read.csv("experiment0_beta0_LR0.05_26-08-2021 10-05-58.csv")
+dataLR5 <- read.csv("experiment3_beta0_LR0.3_24-08-2021 16-44-33.csv")
+dataLR6 <- read.csv("experiment3_beta0_LR0.7_26-08-2021 22-40-18.csv")
+dataLR7 <- read.csv("experiment0_beta0_LR1_27-08-2021 12-07-57.csv")
+
+dataLR1$LR = 0
+dataLR2$LR = 0.1
+dataLR3$LR = 0.5
+dataLR4$LR = 0.05
+dataLR5$LR = 0.3
+dataLR6$LR = 0.7
+dataLR7$LR = 1
+
+#LR1
+dataLR1_2 <- dataLR1 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR1_2 <- dataLR1_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+dataLR1 <- rbind.fill(dataLR1, dataLR1_2)
+
+#LR2
+dataLR2_2 <- dataLR2 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR2_2 <- dataLR2_2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+dataLR2 <- rbind.fill(dataLR2, dataLR2_2)
+
+#LR3
+dataLR3_2 <- dataLR3 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR3_2 <- dataLR3_2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+dataLR3 <- rbind.fill(dataLR3, dataLR3_2)
+
+#LR4
+dataLR4_2 <- dataLR4 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR4_2 <- dataLR4_2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+dataLR4 <- rbind.fill(dataLR4, dataLR4_2)
+
+#LR5
+dataLR5_2 <- dataLR5 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR5_2 <- dataLR5_2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+dataLR5 <- rbind.fill(dataLR5, dataLR5_2)
+
+#LR6
+dataLR6_2 <- dataLR6 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR6_2 <- dataLR6_2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+dataLR6 <- rbind.fill(dataLR6, dataLR6_2)
+
+#LR7
+dataLR7_2 <- dataLR7 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR7_2 <- dataLR7_2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+dataLR7 <- rbind.fill(dataLR7, dataLR7_2)
+
+
+
+dataLR <- rbind(dataLR1, dataLR2, dataLR3, dataLR4, dataLR5, dataLR6, dataLR7)
+
+dataLR$LR <- as.factor(dataLR$LR)
+
+ggscatter(dataLR, x = "Step", y = "preferedSentiment1", size = 0.6,
+          color = "LR", palette = "jco",
+          facet.by = "LR", #scales = "free_x",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred opinion", fullrange = TRUE,
+          title = "Preferred opinion as a function of steps split by learning rate")
+
+
+
+```
+
+
+
+
+
+
+#experiment 3 - combination of LR and beta
+```{r}
+datae3_1 = read.csv("experiment3_beta0_LR0.1_18-08-2021 12-39-25.csv")
+datae3_2 = read.csv("experiment3_beta1_LR0.1_19-08-2021 13-13-51.csv")
+datae3_3 = read.csv("experiment3_beta2_LR0.1_20-08-2021 14-39-25.csv")
+datae3_4 = read.csv("experiment3_beta3_LR0.1_21-08-2021 04-16-52.csv")
+
+datae3_1$beta = 0
+datae3_2$beta = 1
+datae3_3$beta = 2
+datae3_4$beta = 3
+
+#e3_1
+datae3_1_2 <- datae3_1 %>% 
+  select(one_of("preferedSentiment2","beta", "Step"))
+datae3_1_2 <- datae3_1_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+datae3_1 <- rbind.fill(datae3_1, datae3_1_2)
+
+#e3_2
+datae3_2_2 <- datae3_2 %>% 
+  select(one_of("preferedSentiment2","beta", "Step"))
+datae3_2_2 <- datae3_2_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+datae3_2 <- rbind.fill(datae3_2, datae3_2_2)
+
+
+#e3_3
+datae3_3_2 <- datae3_3 %>% 
+  select(one_of("preferedSentiment2","beta", "Step"))
+datae3_3_2 <- datae3_3_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+datae3_3 <- rbind.fill(datae3_3, datae3_3_2)
+
+#e3_4
+datae3_4_2 <- datae3_4 %>% 
+  select(one_of("preferedSentiment2","beta", "Step"))
+datae3_4_2 <- datae3_4_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+datae3_4 <- rbind.fill(datae3_4, datae3_4_2)
+
+
+datae3 <- rbind(datae3_1,datae3_2,datae3_3,datae3_4)
+
+datae3$beta <- as.factor(datae3$beta)
+
+
+
+ggscatter(datae3, x = "Step", y = "preferedSentiment1", size = 0.6,
+          color = "beta", palette = "jco",
+          facet.by = "beta", #scales = "free_x",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred opinion",
+          title = "Preferred opinion as a function of steps for different beta\nvalues when learning rate is 0.1", fullrange = TRUE)
+
+
+
+
+data <- read.csv("experiment3_beta3_LR0.05_21-08-2021 21-36-55.csv")
+
+
+data2 <- data %>%
+  select(one_of("Step", "preferedSentiment2"))
+
+data2 <- data2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+
+data <- rbind.fill(data, data2)
+
+
+
+ggscatter(data, x = "Step", y = "preferedSentiment1", size = 0.6,
+          palette = "jco",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred sentiment", fullrange = TRUE)
+
+
+
+
+
+
+
+#With 50 steps
+data <- read.csv("experiment0_beta3_LR0.05_50steps_23-08-2021 21-58-44.csv")
+
+
+data2 <- data %>%
+  select(one_of("Step", "preferedSentiment2"))
+
+data2 <- data2 %>%
+  dplyr::rename(preferedSentiment1 = preferedSentiment2)
+
+
+data <- rbind.fill(data, data2)
+
+
+
+ggscatter(data, x = "Step", y = "preferedSentiment1", size = 0.6,
+          palette = "jco",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred sentiment", fullrange = TRUE)
+
+
+
+#Look also at communities formed
+data <- read.csv("experiment0_beta3_LR0.05_50steps_23-08-2021 21-58-44.csv")
+data = data[data$Step > 45,]
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+net <- graph_from_data_frame(d = data[,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+
+
+```
+
+
+#Look at data run for 100 steps for beta = 3 and beta = 2 with LR = 0.1
+```{r}
+#DataLR 100
+dataLR100 <- read.csv("experiment100_beta3_LR0.1_27-08-2021_12-09-19.csv")
+
+
+dataLR100_2 <- dataLR100 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR100_2 <- dataLR100_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+dataLR100 <- plyr::rbind.fill(dataLR100, dataLR100_2)
+
+
+ggscatter(dataLR100, x = "Step", y = "preferedSentiment1", size = 0.6,
+          palette = "jco",
+          #facet.by = "LR", #scales = "free_x",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred opinion", fullrange = TRUE,
+          title ="Preferred opinion as a function of steps for beta = 3\nand learning rate = 0.1")
+
+
+```
+
+
+```{r}
+
+
+dataLR100 <- read.csv("experiment_beta2_LR0.1_28-08-2021_05-19-23.csv")
+
+
+dataLR100_2 <- dataLR100 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR100_2 <- dataLR100_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+dataLR100 <- plyr::rbind.fill(dataLR100, dataLR100_2)
+
+
+ggscatter(dataLR100, x = "Step", y = "preferedSentiment1", size = 0.6,
+          palette = "jco",
+          #facet.by = "LR", #scales = "free_x",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred opinion", fullrange = TRUE,
+          title ="Preferred opinion as a function of steps for beta = 2\nand learning rate = 0.1")
+```
+
+
+
+
+#Visualize networks from beta experiment
+```{r}
+library(igraph)
+library(dplyr)
+library(scales)
+
+data = read.csv("experiment2_beta3_17-08-2021 23-26-45.csv")
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+net <- graph_from_data_frame(d = data[data$Step >= 4,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+plot(net2, vertex.label=NA,layout = layout_nicely)
+
+
+net2 <- simplify(net)
+E(net2)$weight = sapply(E(net2), function(e) { 
+    length(all_shortest_paths(net, from=ends(net2, e)[1], to=ends(net2, e)[2])$res)/2 } )
+plot(net2, 
+     vertex.size=15, 
+     vertex.label.dist=0.5, 
+     vertex.label.cex=0.8,
+     vertex.label.degree=-pi/2, 
+     edge.width=E(net2)$weight,
+     layout=layout_nicely,
+     margin=-0.2,
+     vertex.label = NA)
+```
+
+
+
+#Beta2
+```{r}
+
+data = read.csv("experiment2_beta2_16-08-2021 19-47-29.csv")
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+
+net <- graph_from_data_frame(d = data[data$Step >= 4,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+plot(net2, vertex.label=NA,layout = layout_nicely)
+
+
+net2 <- simplify(net)
+E(net2)$weight = sapply(E(net2), function(e) { 
+    length(all_shortest_paths(net, from=ends(net2, e)[1], to=ends(net2, e)[2])$res)/2 } )
+plot(net2, 
+     vertex.size=15, 
+     vertex.label.dist=0.5, 
+     vertex.label.cex=0.8,
+     vertex.label.degree=-pi/2, 
+     edge.width=E(net2)$weight,
+     layout=layout_nicely,
+     margin=-0.2,
+     vertex.label = NA)
+```
+
+
+
+
+```{r}
+
+data = read.csv("experiment2_beta1_15-08-2021 14-57-37.csv")
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+
+net <- graph_from_data_frame(d = data[data$Step >= 4,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+plot(net2, vertex.label=NA,layout = layout_nicely)
+
+
+net2 <- simplify(net)
+E(net2)$weight = sapply(E(net2), function(e) { 
+    length(all_shortest_paths(net, from=ends(net2, e)[1], to=ends(net2, e)[2])$res)/2 } )
+plot(net2, 
+     vertex.size=15, 
+     vertex.label.dist=0.5, 
+     vertex.label.cex=0.8,
+     vertex.label.degree=-pi/2, 
+     edge.width=E(net2)$weight,
+     layout=layout_nicely,
+     margin=-0.2,
+     vertex.label = NA)
+```
+
+
+
+
+```{r}
+
+data = read.csv("experiment2_beta0_16-08-2021 04-21-53.csv")
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+
+net <- graph_from_data_frame(d = data[data$Step >= 4,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+plot(net2, vertex.label=NA,layout = layout_nicely)
+
+
+net2 <- simplify(net)
+E(net2)$weight = sapply(E(net2), function(e) { 
+    length(all_shortest_paths(net, from=ends(net2, e)[1], to=ends(net2, e)[2])$res)/2 } )
+plot(net2, 
+     vertex.size=15, 
+     vertex.label.dist=0.5, 
+     vertex.label.cex=0.8,
+     vertex.label.degree=-pi/2, 
+     edge.width=E(net2)$weight,
+     layout=layout_nicely,
+     margin=-0.2,
+     vertex.label = NA)
+```
+
+
+
+
+
+
+
+```{r}
+
+data = read.csv("experiment2_beta0.5_17-08-2021 10-18-00.csv")
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+
+net <- graph_from_data_frame(d = data[data$Step >= 4,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+plot(net2, vertex.label=NA,layout = layout_nicely)
+
+
+net2 <- simplify(net)
+E(net2)$weight = sapply(E(net2), function(e) { 
+    length(all_shortest_paths(net, from=ends(net2, e)[1], to=ends(net2, e)[2])$res)/2 } )
+plot(net2, 
+     vertex.size=15, 
+     vertex.label.dist=0.5, 
+     vertex.label.cex=0.8,
+     vertex.label.degree=-pi/2, 
+     edge.width=E(net2)$weight,
+     layout=layout_nicely,
+     margin=-0.2,
+     vertex.label = NA)
+```
+
+
+
+
+
+
+
+
+#Split out on first 5 and last time steps to inspect the network.
+
+```{r}
+
+data = read.csv("experiment2_beta1_15-08-2021 14-57-37.csv")
+data = data[data$Step >20,]
+
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+net <- graph_from_data_frame(d = data[,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+plot(net2, vertex.label=NA,layout = layout_nicely)
+
+
+net2 <- simplify(net)
+E(net2)$weight = sapply(E(net2), function(e) { 
+    length(all_shortest_paths(net, from=ends(net2, e)[1], to=ends(net2, e)[2])$res)/2 } )
+plot(net2, 
+     vertex.size=15, 
+     vertex.label.dist=0.5, 
+     vertex.label.cex=0.8,
+     vertex.label.degree=-pi/2, 
+     edge.width=E(net2)$weight,
+     layout=layout_nicely,
+     margin=-0.2,
+     vertex.label = NA)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#Graphs for a 100 interactions with beta = 3
+```{r}
+dataLR100 <- read.csv("experiment100_beta3_LR0.1_27-08-2021_12-09-19.csv")
+
+
+data = dataLR100[dataLR100$Step >=91 & dataLR100$Step <= 100,]
+
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+net <- graph_from_data_frame(d = data[,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+
+```
+
+
+
+```{r}
+
+
+dataLR100 <- read.csv("experiment_beta2_LR0.1_28-08-2021_05-19-23.csv")
+
+
+data = dataLR100[dataLR100$Step >=91 & dataLR100$Step <= 100,]
+
+
+relations <-data %>%
+  select(one_of("Id", "preferedSentiment1"))
+relations <- relations[!duplicated(relations$Id), ]
+
+net <- graph_from_data_frame(d = data[,c("Id", "Partner_ID")], directed = FALSE, vertices = relations)
+
+
+V(net)$value <- relations$preferedSentiment1
+#V(net)$col_values <- round( rescale(V(net)$value, to = c(1,100)),0)
+V(net)$col_values <- ceiling((V(net)$value+1)/2*100)
+
+# Colour vertecies
+colours <- colorRampPalette(c("gray80", "red"))(100)
+V(net)$color <- colours[ V(net)$col_values ]
+
+# Color edges
+E(net)$color <- "black"
+
+#Highlight edge
+E(net)$width <- 1
+E(net)$width[5] <- 5
+
+# Plot
+plot(net)
+
+#Remove vertex labels
+plot(net, vertex.label=NA,layout = layout_nicely)
+
+
+```
+
+
+
+
+
+
+
+
+#polarization experiment
+```{r}
+
+
+dataLR100 <- read.csv("experiment_polarization_beta0_LR0.1_29-08-2021_21-26-45.csv")
+
+
+dataLR100_2 <- dataLR100 %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataLR100_2 <- dataLR100_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+dataLR100 <- plyr::rbind.fill(dataLR100, dataLR100_2)
+
+
+ggscatter(dataLR100, x = "Step", y = "preferedSentiment1", size = 0.6,
+          palette = "jco",
+          #facet.by = "LR", #scales = "free_x",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred opinion", fullrange = TRUE,
+          title ="Preferred opinion as a function of steps for beta = 0\nand learning rate = 0.1")
+```
+
+
+
+#polarization experiment
+```{r}
+
+
+dataPolarization <- read.csv("experiment_polarization_beta3_LR0.1_29-08-2021_17-02-13.csv")
+
+
+dataPolarization_2 <- dataPolarization %>% 
+  select(one_of("preferedSentiment2","LR", "Step"))
+dataPolarization_2 <- dataPolarization_2 %>%
+  dplyr::rename(preferedSentiment1=preferedSentiment2)
+
+dataPolarization <- plyr::rbind.fill(dataPolarization, dataPolarization_2)
+
+
+ggscatter(dataPolarization, x = "Step", y = "preferedSentiment1", size = 0.6,
+          palette = "jco",
+          #facet.by = "LR", #scales = "free_x",
+          #add = "reg.line", conf.int = TRUE,
+          xlab = "Steps",
+          ylab = "Preferred opinion", fullrange = TRUE,
+          title ="Preferred opinion as a function of steps for beta = 3\nand learning rate = 0.1")
+```
